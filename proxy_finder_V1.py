@@ -419,6 +419,86 @@ def main():
     if not results:
         print("[!] No working proxies found. Try --count 300 or --timeout 12.")
         sys.exit(1)
+
+    def add_to_proxychains(proxies):
+        """Append safe proxies to the [ProxyList] section of proxychains4.conf."""
+        import os
+        import shutil
+        import time
+
+        conf_paths = [
+        "/etc/proxychains4.conf",
+        "/etc/proxychains.conf",
+        ]
+
+        conf = None
+        for path in conf_paths:
+            if os.path.isfile(path):
+                conf = path
+                break
+
+        if not conf:
+            print("[!] proxychains4.conf not found. Is proxychains4 installed?")
+            return
+
+        backup_path = f"{conf}.backup"
+        try:
+            shutil.copy2(conf, backup_path)
+            print(f"[*] Backup created: {backup_path}")
+        except Exception as e:
+            print(f"[!] Could not create backup: {e}")
+            return
+
+        try:
+            with open(conf, "r") as f:
+                lines = f.readlines()
+        except PermissionError:
+            print(f"[!] Permission denied reading {conf}. Try running with sudo.")
+            return
+
+        insert_at = None
+        for i, line in enumerate(lines):
+            if line.strip().lower().startswith("[proxylist"):
+                insert_at = i + 1
+                break
+
+        if insert_at is None:
+            print("[!] Could not find [ProxyList] section in proxychains4.conf.")
+            return
+
+        existing_proxies = set()
+        for line in lines:
+            parts = line.strip().split()
+            if len(parts) >= 3 and parts[0] in ('http', 'https', 'socks4', 'socks5'):
+                existing_proxies.add(f"{parts[1]}:{parts[2]}")
+
+        to_add = []
+        for r in proxies:
+            host, port = r["proxy"].rsplit(":", 1)
+        
+            if f"{host}:{port}" in existing_proxies:
+                continue
+        
+            pc_type = "http" if r["protocol"] in ("http", "https") else r["protocol"]
+            to_add.append(f"{pc_type} {host} {port}\n")
+
+        if not to_add:
+            print("[*] All proxies already in proxychains4.conf — nothing to add.")
+            return
+
+        header = [
+            f"\n# Added by proxyfinder on {time.strftime('%Y-%m-%d %H:%M:%S')}\n",
+            f"# {len(to_add)} safe proxies\n"
+        ]
+        lines = lines[:insert_at] + header + to_add + lines[insert_at:]
+
+        try:
+            with open(conf, "w") as f:
+                f.writelines(lines)
+            print(f"[+] Added {len(to_add)} proxies to {conf}")
+            print("[*] Test with: proxychains4 curl https://api.ipify.org")
+        except PermissionError:
+            print(f"[!] Permission denied writing {conf}. Try running with sudo.")
  
  
 if __name__ == "__main__":
